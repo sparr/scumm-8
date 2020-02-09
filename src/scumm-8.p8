@@ -31,24 +31,23 @@ enable_diag_squeeze = false	-- allow squeeze through diag gap?
 
 
 -- game verbs (used in room definitions and ui)
-verbs = {
-	--{verb = verb_ref_name}, text = display_name
-	{ { open = "open" }, text = "open" },
-	{ { close = "close" }, text = "close" },
-	{ { give = "give" }, text = "give" },
-	{ { pickup = "pickup" }, text = "pick-up" },
-	{ { lookat = "lookat" }, text = "look-at" },
-	{ { talkto = "talkto" }, text = "talk-to" },
-	{ { push = "push" }, text = "push" },
-	{ { pull = "pull" }, text = "pull"},
-	{ { use = "use" }, text = "use"}
+-- { verb = "shortname", text = "long name", fail = {"can't use on actor", "can't use on non-actor"} }
+verbdefs = {
+	{ verb = "open", text = "open", fail = {"they don't seem to open", "it doesn't seem to open"} },
+	{ verb = "close", text = "close", fail = {"they don't seem to close", "it doesn't seem to close"} },
+	{ verb = "give", text = "give", fail = {"i don't think i should be giving this away", "i can't do that"} },
+	{ verb = "pickup", text = "pick-up", fail = {"i don't need them", "i don't need that"} },
+	{ verb = "lookat", text = "look-at", fail = {"i think it's alive", "looks pretty ordinary"} },
+	{ verb = "talkto", text = "talk-to", fail = {"erm ...  i don't think they want to talk", "i am not talking to that"} },
+	{ verb = "push", text = "push", fail = {"moving them would accomplish nothing", "it won't budge!"} },
+	{ verb = "pull", text = "pull", fail = {"moving them would accomplish nothing", "it won't budge!"} },
+	{ verb = "use", text = "use", fail = {"i can't just *use* someone", "that doesn't work"} }
 }
+
 -- verb to use when just clicking aroung (e.g. move actor)
-verb_default = {
-	{ walkto = "walkto" }, text = "walk to"
-}
+verbdef_default = { verb = "walkto", text = "walk to" }
 -- index of the verb to use when clicking items in inventory (e.g. look-at)
-verb_default_inventory_index = 5
+verb_default_inventory = "lookat"
 
 function reset_ui()
 	verb_maincol = 12  -- main color (lt blue)
@@ -552,63 +551,37 @@ function shake(enabled)
 	cam_shake, cam_shake_amount = enabled, enabled and 1 or cam_shake_amount
 end
 
+-- preprocess verbs
+for index, verbdef in pairs(verbdefs) do
+	verbdef.index = index
+end
+for verbdef in all(verbdefs) do
+	verbdefs[verbdef.verb] = verbdef
+end
 
 -- logic used to determine a "default" verb to use
 -- (e.g. when you right-click an object)
-function find_default_verb(obj)
+function find_default_verbdef(obj)
 	local default_verb = "lookat"
 
 	if has_flag(obj.classes, "class_talkable") then
 		default_verb = "talkto"
 	elseif has_flag(obj.classes, "class_openable") then
-		if obj.state == "state_closed" then
-			default_verb = "open"
-		else
-			default_verb = "close"
-		end
+		default_verb = obj.state == "state_closed" and "open" or "close"
 	end
 
 	-- now find the full verb definition
-	for v in all(verbs) do
-		vi = get_verb(v)
-		if vi[2] == default_verb then default_verb=v break end
-	end
-	return default_verb
+	return verbdefs[default_verb]
 end
 
 -- actions to perform when object doesn't have an entry for verb
 function unsupported_action(verb, obj1, obj2)
 
-	local is_actor = has_flag(obj1.classes, "class_actor")
+	local response = verbdefs[verb].fail
+	response = response and response[has_flag(obj1.classes, "class_actor") and 1 or 2] or "hmm. no."
+	response = (obj2 and response == "that doesn't work" and has_flag(obj2.classes, class_actor)) and "i can't use that on someone!" or response
 
-	if verb == "walkto" then
-		return
-
-	elseif verb == "pickup" then
-		say_line(is_actor and "i don't need them" or "i don't need that")
-
-	elseif verb == "use" then
-		say_line(is_actor and "i can't just *use* someone" or
-			((obj2 and has_flag(obj2.classes, class_actor)) and "i can't use that on someone!" or "that doesn't work"))
-
-	elseif verb == "give" then
-		say_line(is_actor and "i don't think i should be giving this away" or "i can't do that")
-
-	elseif verb == "lookat" then
-		say_line(is_actor and "i think it's alive" or "looks pretty ordinary")
-
-	elseif verb == "open" or verb == "close" then
-		say_line((is_actor and "they don't" or "it doesn't")  ..  " seem to "  ..  verb)
-
-	elseif verb == "push" or verb == "pull" then
-		say_line(is_actor and "moving them would accomplish nothing" or "it won't budge!")
-
-	elseif verb == "talkto" then
-		say_line(is_actor and "erm ...  i don't think they want to talk" or "i am not talking to that!")
-
-	else
-		say_line"hmm. no."
-	end
+		say_line(response)
 end
 
 
@@ -941,15 +914,15 @@ function change_room(new_room, fade)
 	end
 end
 
+-- function valid_verbdef(verbdef, object)
+-- 	return valid_verb(verbdef.verb, object)
+-- end
+
 function valid_verb(verb, object)
 	-- check params
 	if (not object or not object.verbs) return false
 	-- look for verb
-	if istable(verb) then
-		if (object.verbs[verb[1]]) return true
-	else
-		if (object.verbs[verb]) return true
-	end
+	if (object.verbs[verb]) return true
 	-- must not be valid if reached here
 	-- return false
 end
@@ -1232,17 +1205,9 @@ function get_keys(obj)
 	return keys
 end
 
-function get_verb(obj)
-	local verb, keys = {}, get_keys(obj[1])
-	add(verb, keys[1])						-- verb func
-	add(verb, obj[1][ keys[1] ])  -- verb ref name
-	add(verb, obj.text)						-- verb disp name
-	return verb
-end
-
 function clear_curr_cmd()
 	-- reset all command values
-	verb_curr, executing_cmd, cmd_curr, noun1_curr, noun2_curr, me = get_verb(verb_default), false, ""
+	verbdef_curr, executing_cmd, cmd_curr, noun1_curr, noun2_curr, me = verbdef_default, false, ""
 end
 
 clear_curr_cmd()
@@ -1478,8 +1443,6 @@ cursor_x, cursor_y = mid(0, cursor_x, 127), mid(0, cursor_y, 127)
 -- 1 = z/lmb, 2 = x/rmb, (4=middle)
 function input_button_pressed(button_index)
 
-	local vc2 = verb_curr[2]
-
 	-- abort if no actor selected at this point
 	if (not selected_actor) return
 
@@ -1490,10 +1453,9 @@ function input_button_pressed(button_index)
 		return
 	end
 
-
-	if hover_curr_verb then
+	if hover_curr_verbdef then
 		-- change verb and now reset any active objects
-		verb_curr, noun1_curr, noun2_curr = get_verb(hover_curr_verb)
+		verbdef_curr, noun1_curr, noun2_curr = hover_curr_verbdef
 
 	elseif hover_curr_object then
 		-- if valid obj, complete command
@@ -1507,15 +1469,15 @@ function input_button_pressed(button_index)
     noun1_curr = hover_curr_object
    end
 
-			if (vc2 == get_verb(verb_default)[2]
+			if (verbdef_curr == verbdef_default
     and hover_curr_object.owner) then
      -- inventory item, perform look-at
-     verb_curr = get_verb(verbs[verb_default_inventory_index])
+     verbdef_curr = verbdefs[verb_default_inventory]
 			end
 
-		elseif hover_curr_default_verb then
+		elseif hover_curr_default_verbdef then
 			-- perform default verb action (if present)
-			verb_curr, noun1_curr = get_verb(hover_curr_default_verb), hover_curr_object
+			verbdef_curr, noun1_curr = hover_curr_default_verbdef, hover_curr_object
 			-- force repaint of command (to reflect default verb)
 			command_draw()
 		end
@@ -1535,11 +1497,13 @@ function input_button_pressed(button_index)
 		-- what else could there be? actors!?
 	end
 
+	local verb = verbdef_curr.verb
+
 	-- attempt to use verb on object (if not already executing verb)
 	if noun1_curr then
 	 --and not executing_cmd
 		-- are we starting a 'use' command?
-		if vc2 == "use" or vc2 == "give" then
+		if verb == "use" or verb == "give" then
 			-- if noun2_curr then
 			--  -- 'use' part 2
 			-- elseif
@@ -1556,7 +1520,7 @@ function input_button_pressed(button_index)
 			-- if obj not in inventory (or about to give/use it)...
 			if (not noun1_curr.owner
 				   and (not has_flag(noun1_curr.classes, "class_actor")
-							or vc2 != "use"))
+							or verb != "use"))
 			 or noun2_curr
 			then
 				-- walk to use pos and face dir
@@ -1575,20 +1539,20 @@ function input_button_pressed(button_index)
 				do_anim(selected_actor, "face_towards", use_dir)
 			end
 			-- does current object support active verb?
-			if valid_verb(verb_curr,noun1_curr) then
+			if valid_verb(verb, noun1_curr) then
 				-- finally, execute verb script
-				start_script(noun1_curr.verbs[verb_curr[1]], false, noun1_curr, noun2_curr)
+				start_script(noun1_curr.verbs[verb], false, noun1_curr, noun2_curr)
 			else
 				-- check for door
 				if has_flag(noun1_curr.classes, "class_door") then
 					-- perform default door action
 					--start_script(function()
-						local func = door_funcs[vc2]
+						local func = door_funcs[verb]
 						if (func) func(noun1_curr, noun1_curr.target_door)
 					--end, false)
 				else
 					-- e.g. "i don't think that will work"
-					unsupported_action(vc2, noun1_curr, noun2_curr)
+					unsupported_action(verb, noun1_curr, noun2_curr)
 				end
 			end
 			-- clear current command
@@ -1614,7 +1578,7 @@ function check_collisions()
 	if (not room_curr) return
 
 	-- reset hover collisions
-	hover_curr_verb, hover_curr_default_verb, hover_curr_object, hover_curr_sentence, hover_curr_arrow = nil
+	hover_curr_verbdef, hover_curr_default_verbdef, hover_curr_object, hover_curr_sentence, hover_curr_arrow = nil
 	-- are we in dialog mode?
 	if dialog_curr and dialog_curr.visible then
 		for s in all(dialog_curr.sentences) do
@@ -1667,8 +1631,8 @@ function check_collisions()
 
 	if selected_actor then
 		-- check ui/inventory collisions
-		for v in all(verbs) do
-			if (iscursorcolliding(v)) hover_curr_verb = v
+		for v in all(verbdefs) do
+			if (iscursorcolliding(v)) hover_curr_verbdef = v
 		end
 		for a in all(ui_arrows) do
 			if (iscursorcolliding(a)) hover_curr_arrow = a
@@ -1679,17 +1643,17 @@ function check_collisions()
 			if iscursorcolliding(obj) then
 				hover_curr_object = obj
 				-- pickup override for inventory objects
-				if (verb_curr[2] == "pickup" and hover_curr_object.owner) verb_curr = nil
+				if (verbdef_curr.verb == "pickup" and hover_curr_object.owner) verbdef_curr = nil
 			end
 			-- check for disowned objects!
 			if (obj.owner != selected_actor) del(selected_actor.inventory, obj)
 		end
 
 		-- default to walkto (if nothing set)
-		verb_curr = verb_curr or get_verb(verb_default)
+		verbdef_curr = verbdef_curr or verbdef_default
 
 		-- update "default" verb for hovered object (if any)
-		hover_curr_default_verb = hover_curr_object and find_default_verb(hover_curr_object) or hover_curr_default_verb
+		hover_curr_default_verbdef = hover_curr_object and find_default_verbdef(hover_curr_object) or hover_curr_default_verbdef
 	end
 end
 
@@ -1940,13 +1904,13 @@ end
 
 function command_draw()
 	-- draw current command
-	local cmd_col, verb_curr_ref, command = verb_maincol, verb_curr[2], verb_curr and verb_curr[3] or ""
+	local cmd_col, command = verb_maincol, verbdef_curr and verbdef_curr.text or ""
 
 	if noun1_curr then
 		command = command.." "..noun1_curr.name
-		if verb_curr_ref == "use" and (not executing_cmd or noun2_curr) then
+		if verbdef_curr.verb == "use" and (not executing_cmd or noun2_curr) then
 			command = command.." with"
-		elseif verb_curr_ref == "give" then
+		elseif verbdef_curr.verb == "give" then
 			command = command.." to"
 		end
 	end
@@ -1958,13 +1922,13 @@ function command_draw()
 		and ( not noun1_curr or (noun1_curr != hover_curr_object) )
 		-- or walk-to objs in inventory!
 		-- and ( not hover_curr_object.owner or
-		-- 				or verb_curr_ref != get_verb(verb_default)[2] )
+		-- 				or verbdef_curr != verbdef_default )
   -- or when already executing!
   and not executing_cmd
 	then
   -- default to look-at for inventory items
   if hover_curr_object.owner
-   and verb_curr_ref == get_verb(verb_default)[2] then
+   and verbdef_curr == verbdef_default then
    command = "look-at"
   end
 		command = command.." "..hover_curr_object.name
@@ -2013,24 +1977,23 @@ function ui_draw()
 	-- draw verbs
 	local xpos, ypos, col_len = 0, 75, 0
 
-	for v in all(verbs) do
-		local txtcol = v == hover_curr_verb and verb_hovcol or
-			(hover_curr_default_verb and v == hover_curr_default_verb and verb_defcol or
+	for v in all(verbdefs) do
+		local txtcol = v == hover_curr_verbdef and verb_hovcol or
+			(hover_curr_default_verbdef and v == hover_curr_default_verbdef and verb_defcol or
 			verb_maincol)
 
 		-- get verb info
-		local vi = get_verb(v)
-		print(vi[3], xpos, ypos+stage_top+1, verb_shadcol)  -- shadow
-		print(vi[3], xpos, ypos+stage_top, txtcol)  -- main
+		print(v.text, xpos, ypos+stage_top+1, verb_shadcol)  -- shadow
+		print(v.text, xpos, ypos+stage_top, txtcol)  -- main
 
 		-- capture bounds
 		v.x = xpos
 		v.y = ypos
-		recalc_bounds(v, #vi[3]*4, 5, 0, 0)
+		recalc_bounds(v, #v.text * 4, 5, 0, 0)
 		--show_collision_box(v)
 
 		-- auto-size column
-		if (#vi[3] > col_len) col_len = #vi[3]
+		if (#v.text > col_len) col_len = #v.text
 
 		ypos += 8
 
